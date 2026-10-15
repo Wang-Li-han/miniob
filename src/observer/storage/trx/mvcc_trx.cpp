@@ -172,6 +172,13 @@ RC MvccTrx::delete_record(Table *table, Record &record)
   return RC::SUCCESS;
 }
 
+RC MvccTrx::update_record(Table *table, Record &old_record, Record &new_record)
+{
+  // 简化实现：直接进行物理更新（保持 RID 不变，原地改写记录并维护索引）
+  // 注意：这里没有为 MVCC 增加版本行，回滚时不会恢复旧值，后续如需支持可参考 delete+insert 的方式
+  return table->update_record_with_trx(old_record, new_record, this);
+}
+
 RC MvccTrx::visit_record(Table *table, Record &record, ReadWriteMode mode)
 {
   Field begin_field;
@@ -237,13 +244,13 @@ RC MvccTrx::visit_record(Table *table, Record &record, ReadWriteMode mode)
 void MvccTrx::trx_fields(Table *table, Field &begin_xid_field, Field &end_xid_field) const
 {
   const TableMeta      &table_meta = table->table_meta();
-  span<const FieldMeta> trx_fields = table_meta.trx_fields();
-  ASSERT(trx_fields.size() >= 2, "invalid trx fields number. %d", trx_fields.size());
+  auto trx_field_metas = table_meta.trx_fields();
+  ASSERT(trx_field_metas.size() >= 2, "invalid trx fields number. %d", trx_field_metas.size());
 
   begin_xid_field.set_table(table);
-  begin_xid_field.set_field(&trx_fields[0]);
+  begin_xid_field.set_field(&trx_field_metas[0]);
   end_xid_field.set_table(table);
-  end_xid_field.set_field(&trx_fields[1]);
+  end_xid_field.set_field(&trx_field_metas[1]);
 }
 
 RC MvccTrx::start_if_need()

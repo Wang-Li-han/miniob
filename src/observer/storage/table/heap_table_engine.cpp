@@ -103,6 +103,49 @@ RC HeapTableEngine::delete_record(const Record &record)
   return rc;
 }
 
+RC HeapTableEngine::update_record_with_trx(const Record &old_record, const Record &new_record, Trx *trx)
+{
+  // 先删除旧的索引项
+  RC rc = RC::SUCCESS;
+  for (Index *index : indexes_) {
+    rc = index->delete_entry(old_record.data(), &old_record.rid());
+    if (rc != RC::SUCCESS) {
+      LOG_ERROR("failed to delete old entry from index. table name=%s, index name=%s, rid=%s, rc=%s",
+                table_meta_->name(), index->index_meta().name(), old_record.rid().to_string().c_str(), strrc(rc));
+      return rc;
+    }
+  }
+
+  // RecordFileHandler does not support in-place updates. Replace the record,
+  // then insert index entries using the RID assigned to the replacement.
+  RID old_rid = old_record.rid();
+  rc = record_handler_->delete_record(&old_rid);
+  if (rc != RC::SUCCESS) {
+    LOG_ERROR("failed to delete old record. table name=%s, rid=%s, rc=%s",
+              table_meta_->name(), old_record.rid().to_string().c_str(), strrc(rc));
+    return rc;
+  }
+
+  RID new_rid;
+  rc = record_handler_->insert_record(new_record.data(), table_meta_->record_size(), &new_rid);
+  if (rc != RC::SUCCESS) {
+    LOG_ERROR("failed to insert replacement record. table name=%s, rid=%s, rc=%s",
+              table_meta_->name(), old_record.rid().to_string().c_str(), strrc(rc));
+    return rc;
+  }
+
+  for (Index *index : indexes_) {
+    rc = index->insert_entry(new_record.data(), &new_rid);
+    if (rc != RC::SUCCESS) {
+      LOG_ERROR("failed to insert new entry into index. table name=%s, index name=%s, rid=%s, rc=%s",
+                table_meta_->name(), index->index_meta().name(), new_rid.to_string().c_str(), strrc(rc));
+      return rc;
+    }
+  }
+
+  return RC::SUCCESS;
+}
+
 RC HeapTableEngine::get_record_scanner(RecordScanner *&scanner, Trx *trx, ReadWriteMode mode)
 {
   scanner = new HeapRecordScanner(table_, *data_buffer_pool_, trx, db_->log_handler(), mode, nullptr);
